@@ -3,7 +3,9 @@ IDEAS (Gamedesign):
 - Map gets smaller over time (Force action and agressive gameplay)
 - Maybe tiles that break away if visited twice (crack on first time)
 
-CHANGELOG:
+CHANGELOG: (from new to old)
+- added destruction phase (known bug: not killing last hero in heroTeam, because of how heroPos and heroTeam are only connected via index-referencing)*
+
 - added background texture
 - increased health in Characters classes
 - picking heros now takes turns
@@ -12,12 +14,13 @@ CHANGELOG:
 
 
 TODO:
+- *we need to painfully restructure the core mechanics, to get rid of at least one of the two hero* lists... x,y position should be stored in the object itself!!!
+
 - clean up MAIN and sort functions into other files
+- add pregame phase to let players pick starting points
 - add background picker, that picks BG texture according to playFieldSize
-- pregame UI
 - make background texture usage procedual (one hex-texture instance rendered per hex-coord)
-- hit effect
-- die effect
+- hit effect / die effect
 
 '''
 
@@ -27,7 +30,14 @@ import Characters as char
 
 pygame.init()
 
-# Important Game Vars - SCREEN and PLAYFIELD
+''' 
+    ##############################################
+    # Important UI Vars - SCREEN and PLAYFIELD   #
+    ##############################################
+'''
+
+INI_skipPregame = True
+
 width = 1024
 length = 680
 
@@ -42,20 +52,32 @@ midpoint = [int(width / 2), int(length / 2)]
 print('midpoint:', midpoint)
 
 playFields = [midpoint]
+
+
+''' 
+    ##############################################
+    # Important Game Vars - POSITIONS AND COUNTS #
+    ##############################################
+'''
+breakAwayList = []
+for i in range(playFieldSize):
+    breakAwayList.append([])
 holderList = []
 
-# Important Game Vars - POSITIONS AND COUNTS
-
+destrPhaseFrequency = 3  # how often will one ring break away
+destrPhaseStep = 1
+turnCounter = 0
 turnToggler = False
 heroPos = [[],[]]  # List of ALL positions of objects; seperated into 2 sublists
 activeHeroNo = 0
 activeEnemyNo = 0
-heroCount = 4
-enemyCount = 4
+heroCount = 2
+enemyCount = 2
 heroTeam = [[], []]   # List of ALL objects-pointers; seperated into 2 sublists
 
+
 '''  building board: '''
-for i in range(playFieldSize):
+for cycle in range(playFieldSize):
     for currentpoint in playFields:
         field = [currentpoint[0] + hexW, currentpoint[1]]
         if field not in playFields and field not in holderList:
@@ -76,6 +98,7 @@ for i in range(playFieldSize):
         if field not in playFields and field not in holderList:
             holderList.append(field)
         print('holder: ', holderList)
+    breakAwayList[cycle] = holderList
     for i in holderList:
         playFields.append(i)
     holderList = []
@@ -84,7 +107,7 @@ print('playfields:', playFields)
 print('len playfields:', len(playFields))
 
 #input cooldown to prevent multiple inputs per button press
-inputCooldown = 10
+inputCooldown = 5
 inputCooldownCounter = inputCooldown
 
 #create Play Surface
@@ -105,6 +128,48 @@ fpsController = pygame.time.Clock()
 
 
 # Important Game Functions
+
+def TurnSwitch():
+    global turnToggler
+    global turnCounter
+    global destrPhaseStep
+    deathZone = []
+
+    turnToggler = not turnToggler
+    turnCounter += 1
+    print('TURNSWITCH! \nStarting Round No ', turnCounter, '...')
+
+    # this part is for the destruction phase and needs cleanup TODO
+    if not turnCounter % destrPhaseFrequency:  # (if Round is dividing by PhaseStepper)
+        print('turnCounter % destrPhaseFrequency: ', turnCounter % destrPhaseFrequency)
+        for i in breakAwayList[-destrPhaseStep]:
+            playFields.remove(i)
+        deathZone = breakAwayList[-destrPhaseStep]
+        for pos in heroPos[0]:
+            if pos in deathZone:
+                indexToken = heroPos[0].index(pos)
+                print('INDEXTOKEN, team 0: ', indexToken)
+                heroPos[0].remove(pos)
+                heroTeam[0].pop(indexToken)
+                print('heroTeam: ', heroTeam)
+                if len(heroTeam[0]) == 0:
+                    GameOver(0)
+                elif len(heroTeam[1]) == 0:
+                    GameOver(1)
+        for pos in heroPos[1]:
+            if pos in deathZone:
+                indexToken = heroPos[1].index(pos)
+                print('INDEXTOKEN, team 1: ', indexToken)
+                heroPos[1].remove(pos)
+                heroTeam[1].pop(indexToken)
+                if len(heroTeam[0]) == 0:
+                    GameOver(0)
+                elif len(heroTeam[1]) == 0:
+                    GameOver(1)
+                print('heroTeam: ', heroTeam)
+        print('BREAKING AWAY RING No', destrPhaseStep, '!!!')
+        destrPhaseStep += 1
+
 
 def HexDrawer(pos):
     return [[pos[0] - hexW / 2, pos[1] - hexH / 4],
@@ -323,6 +388,8 @@ def Push(direction, x, push, activeNo):
         - if pulled (negative value on push) enemy lands on field behind attacker or further
         - attacker doesn't move after pull
     '''
+    global activeHeroNo
+    global activeEnemyNo
     pos = heroPos[not turnToggler][x]
     print('Origin Pos:    ', pos)
     if push < 0:
@@ -361,7 +428,7 @@ def Push(direction, x, push, activeNo):
                 heroPos[turnToggler][activeNo] = pos
             pos = newPos
 
-def Swap(direction, x, activeNo):
+def Swap(x, activeNo):
     newheroPos = heroPos[not turnToggler][x]
     heroPos[not turnToggler][x] = heroPos[turnToggler][activeNo]
     heroPos[turnToggler][activeNo] = newheroPos
@@ -402,7 +469,8 @@ def InitMove(direction):
     playSurface.blit(image, imagerect)
     pygame.display.flip()
 
-    pygame.time.delay(200)
+    pygame.time.delay(10)
+
 
 
     if newPos in heroPos[not turnToggler]: #ATTACK
@@ -465,9 +533,17 @@ def RenderHero(index, pos, team):
     #heroRect.center = pos
     #playSurface.blit(heroSurf3, heroRect)
 
-
+def RenderTurnCounter():
+    # Rendering UI and texts
+    TurnFont = pygame.font.SysFont('Creepster-Regular.ttf', 60)
+    TurnSurf = TurnFont.render('ROUND: '+str(turnCounter), True, white)
+    TurnRect = TurnSurf.get_rect()
+    TurnRect.midtop = (width / 4, length / 1.25)
+    playSurface.blit(TurnSurf, TurnRect)
 
 def gameIntro():
+
+
     global inputCooldownCounter
     global turnToggler
     intro = True
@@ -493,6 +569,9 @@ def gameIntro():
             print('spawner: field taken')
 
     print('heroPos: ', heroPos)
+
+    if INI_skipPregame:
+        return
 
     count = 0  # used for indexing the object-creator
 
@@ -582,13 +661,32 @@ def gameIntro():
             inputCooldownCounter -= 1
 
             # finally, before starting Main Loop:
+    print('heroPos = ', heroPos)
     print('heroTeam = ', heroTeam)
-    print('charCount: ', char.Character.charCount)
 
 
-# Main Logic and Loop *************************************************************************************************
 
-gameIntro()
+
+''' 
+    ##############################################
+    #                  PREGAME                   #
+    ##############################################
+'''
+
+if INI_skipPregame:
+    for i in range(heroCount):
+        heroTeam[0].append(char.Dwarf(i))
+        heroTeam[1].append(char.Dwarf(i))
+        print('heroPos = ', heroPos)
+        print('heroTeam: ', heroTeam)
+
+    gameIntro()
+
+''' 
+    ##############################################
+    #                  MAIN LOOP                 #
+    ##############################################
+'''
 
 while True:
     for event in pygame.event.get():
@@ -603,33 +701,33 @@ while True:
     if keys[pygame.K_LEFT] and not keys[pygame.K_DOWN] and not keys[pygame.K_UP]:
         if inputCooldownCounter == 0:
             if InitMove('LEFT'):
-                inputCooldownCounter = inputCooldown/2
-                turnToggler = not turnToggler
+                inputCooldownCounter = inputCooldown
+                TurnSwitch()
     if keys[pygame.K_RIGHT] and not keys[pygame.K_DOWN] and not keys[pygame.K_UP]:
         if inputCooldownCounter == 0:
             if InitMove('RIGHT'):
-                inputCooldownCounter = inputCooldown/2
-                turnToggler = not turnToggler
+                inputCooldownCounter = inputCooldown
+                TurnSwitch()
     if keys[pygame.K_DOWN] and keys[pygame.K_RIGHT]:
         if inputCooldownCounter == 0:
             if InitMove('DOWNRIGHT'):
-                inputCooldownCounter = inputCooldown/2
-                turnToggler = not turnToggler
+                inputCooldownCounter = inputCooldown
+                TurnSwitch()
     if keys[pygame.K_DOWN] and keys[pygame.K_LEFT]:
         if inputCooldownCounter == 0:
             if InitMove('DOWNLEFT'):
-                inputCooldownCounter = inputCooldown/2
-                turnToggler = not turnToggler
+                inputCooldownCounter = inputCooldown
+                TurnSwitch()
     if keys[pygame.K_UP] and keys[pygame.K_RIGHT]:
         if inputCooldownCounter == 0:
             if InitMove('UPRIGHT'):
-                inputCooldownCounter = inputCooldown/2
-                turnToggler = not turnToggler
+                inputCooldownCounter = inputCooldown
+                TurnSwitch()
     if keys[pygame.K_UP] and keys[pygame.K_LEFT]:
         if inputCooldownCounter == 0:
             if InitMove('UPLEFT'):
-                inputCooldownCounter = inputCooldown/2
-                turnToggler = not turnToggler
+                inputCooldownCounter = inputCooldown
+                TurnSwitch()
 
     if keys[pygame.K_SPACE]:  # change hero
         if turnToggler:
@@ -639,7 +737,7 @@ while True:
                 else:
                     activeEnemyNo = 0
             print('activeEnemyNo: ', activeEnemyNo)
-        if not turnToggler:
+        elif not turnToggler:
             if inputCooldownCounter == 0:
                 if activeHeroNo <= len(heroPos[0]) - 2:
                     activeHeroNo += 1
@@ -650,6 +748,8 @@ while True:
         inputCooldownCounter = inputCooldown
 
     # Rendering
+
+
     # Rendering background:
     bg = pygame.image.load('background_size3.png')
     bgRect = bg.get_rect()
@@ -663,9 +763,9 @@ while True:
     for pos in heroPos[1]:  # rendering enemies
         pygame.draw.polygon(playSurface, red, HexDrawer(pos))
         RenderHero(heroPos[1].index(pos), pos, heroTeam[1])
-    '''for field in playFields :  # rendering hex fields
+    for field in playFields :  # rendering hex fields
         pygame.draw.polygon(playSurface, black, HexDrawer(field), 3)
-    ''' # deactivated ATM, since hexfields are in background texture
+
 
     for pos in heroPos[0]: # rendering white outline
         if pos == heroPos[0][activeHeroNo] and not turnToggler:
@@ -678,7 +778,8 @@ while True:
     if inputCooldownCounter >= 1:
         inputCooldownCounter -= 1
 
+    RenderTurnCounter()
+
     pygame.display.flip()
 
     fpsController.tick(30)
-
